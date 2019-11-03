@@ -25,8 +25,8 @@ def append_training(name, states, vals):
     # Load previously existing data
     if os.path.isfile(state_path):
         assert os.path.isfile(vals_path)
-        statesd = numpy.load("states-{}.npy".format(name))
-        valsd = numpy.load("vals-{}.npy".format(name))
+        statesd = numpy.load(state_path)
+        valsd = numpy.load(vals_path)
         statesd = numpy.vstack([statesd, numpy.array(states)])
         valsd = numpy.hstack([valsd, vals])
         # Make sure shape is as expected
@@ -34,7 +34,7 @@ def append_training(name, states, vals):
         assert len(valsd.shape) == 1
         assert statesd.shape[1] == states.shape[1]
     else:
-        statesd = numpy.empty((0, statesd.shape[1]))
+        statesd = numpy.empty((0, states.shape[1]))
         valsd = numpy.empty((0,))
 
     # Write to separate file (so we don't overwrite everything if something goes wrong)
@@ -43,10 +43,14 @@ def append_training(name, states, vals):
     
     # Replace
     if os.path.isfile(state_path):
+        if os.path.isfile(state_path + "-old"):
+            os.remove(state_path + "-old")
+        if os.path.isfile(vals_path + "-old"):
+            os.remove(vals_path + "-old")
         os.rename(state_path, state_path + "-old")
         os.rename(vals_path, vals_path + "-old")
-    os.rename(state_path + "-new", state_path)
-    os.rename(vals_path + "-new", vals_path)
+    os.rename(state_path + "-new.npy", state_path)
+    os.rename(vals_path + "-new.npy", vals_path)
     
 def make_training(max_turns=30, samples=500, 
                   model=None, threshold=0.1, threshold_samples=50,
@@ -71,7 +75,7 @@ def make_training(max_turns=30, samples=500,
         if gs.is_over() or gs.player1.authority < 5 or gs.player2.authority < 5:
             break
         if show_progress:
-            print(".", end='')
+            print(".", end='', flush=True)
         
         # Get model evaluation
         if model is not None:

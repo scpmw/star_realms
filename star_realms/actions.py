@@ -54,13 +54,13 @@ class Combined(Action):
         self.actions = actions
         super().__init__()
     def choices(self, state):
-        for act in enumerate(actions):
+        for act in self.actions:
             choices, is_rand = act.choices(state)
             if not choices.empty():
                 return choices, is_rand
         return MSet()
     def apply(self, state, choice):
-        for i, act in enumerate(actions):
+        for i, act in enumerate(self.actions):
             if act.possible(state):
                 act.apply(state, choice)
                 break
