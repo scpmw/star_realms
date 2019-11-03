@@ -27,7 +27,7 @@ if args['<count>'] is None:
 
 # Load model, if appropriate
 model = None
-if '--model' in args:
+if args['--model'] is not None:
     model = make_model(torch.load(args['--model']))
     model.train(False)
     
