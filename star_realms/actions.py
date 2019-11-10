@@ -278,10 +278,12 @@ class ScrapHand(Action):
 class ScrapHandDiscard(Action):
     """ Scrap hand/discard pile """
     def choices(self, state):
-        return state.hand + state.player.discard, False
+        return state.hand + state.player.discard + mset.MSet([()]), False
     def possible(self, state):
-        return not state.hand.empty() or not state.player.discard.empty()
+        return True
     def apply(self, state, choice):
+        if choice == ():
+            return
         if choice in state.player.discard:
             state.player.discard.remove(choice)
         else:
