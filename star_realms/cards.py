@@ -315,7 +315,12 @@ class EmbassyYacht():
     def play(state, card):
         state.player.authority += 3
         state.trade += 2
-        state.actions.append(BaseCount(2, Combined(DrawCard(), DrawCard())))
+        # state.actions.append(BaseCount(2, Combined(DrawCard(), DrawCard())))
+        # ... it seems the correct interpretation is that the bases must be there
+        # when the embassy yacht gets played
+        if state.player.bases.count() >= 2:
+            state.force_action(DrawCard())
+            state.force_action(DrawCard())
 @card(factions.trade_federation, count=3, cost=1)
 class FederationShuttle():
     @staticmethod
