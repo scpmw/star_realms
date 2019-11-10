@@ -24,7 +24,6 @@ def make_model(nn_state = None, layout = (25,5,2), dropout=0.3):
     if nn_state is not None:
         model.load_state_dict(nn_state)
     return model
-    
 
 min_prob = 1 / 1000
 max_prob = 1 - min_prob
@@ -34,4 +33,20 @@ def prob_to_value(prob):
 def value_to_prob(val):
     return 1 / (numpy.exp(-val) + 1)
     
+def model_game_prob(model, game_state):
+    """ Returns model propability that next player to move wins.
     
+    :param model: Model to use
+    :param game_state: Input game state
+    """
+    
+    # Check whether game is over
+    p1, p2 = game_state.move_players()
+    if p1.authority <= 0:
+        return 0
+    if p2.authority <= 0:
+        return 1
+        
+    # Otherwise check model
+    result = model(torch.tensor(game_state.to_array(), dtype=torch.float))
+    return value_to_prob(result.item())

@@ -4,8 +4,8 @@ import numpy
 import torch
 
 from star_realms.state import GameState
-from star_realms.play import play_random_turn, random_win_prob
-from star_realms.nn import prob_to_value, value_to_prob
+from star_realms.play import play_random_turn, play_greedy_turn, random_win_prob
+from star_realms.nn import prob_to_value, value_to_prob, model_game_prob
 
 TRAINING_DIR = 'training'
 
@@ -68,7 +68,7 @@ def make_training(max_turns=30, samples=500,
     """
     states = []; vals = []
     gs = GameState()
-    for _ in range(30):
+    for _ in range(max_turns):
     
         # Play, check whether game is over
         play_random_turn(gs)
@@ -94,12 +94,63 @@ def make_training(max_turns=30, samples=500,
                 
         # Add to training set?
         if not under_threshold:
-            print()
-            print(gs.describe())
-            if model is not None:
-                print("Model:", m)
-            print("Actual:", prob_to_value(numpy.average(probs)))
+            if show_new:
+                print()
+                print(gs.describe())
+                if model is not None:
+                    print("Model:", m)
+                print("Actual:", prob_to_value(numpy.average(probs)))
             states.append(gs.to_array())
             vals.append(prob_to_value(numpy.average(probs)))
             
+    return numpy.array(states), numpy.array(vals)
+    
+
+def make_greedy_training(model, max_turns=30, samples=50, depths=[3,4,5,6],
+                         show_progress=True, show_new=True):
+    
+    states = []; vals = []
+    finish_move_cache = {}
+    game_prob_cache = {}
+    gs = GameState()
+    for _ in range(max_turns):
+    
+        # Play, check whether game is (close to) over
+        play_random_turn(gs)
+        if gs.is_over() or gs.player1.authority < 5 or gs.player2.authority < 5:
+            break
+        if show_progress:
+            print(".", end='', flush=True)
+
+        # Take samples
+        probs = []  
+        for i in range(samples):
+            gs2 = GameState(gs)
+            for depth in range(max(depths)+1):
+
+                # Continue adding probabilities even if game is over
+                if gs2.is_over():
+                    gs2.move += 1
+                else:
+                    play_greedy_turn(gs2, model, finish_move_cache, game_prob_cache, verbose=0)
+
+                # Get model opinion on the state
+                if depth in depths:
+                    prob = model_game_prob(model, gs2)
+                    if (gs2.move - gs.move) % 2 != 0:
+                        prob = 1 - prob
+                    probs.append(prob)
+        
+        # Take average
+        if show_new:
+            print()
+            print("########################")
+            print(gs.describe())
+            if model is not None:
+                print("Model:", model(torch.tensor(gs.to_array(), dtype=torch.float)).item())
+            print("Actual:", prob_to_value(numpy.average(probs)), "({} samples)".format(len(probs)))
+        
+        states.append(gs.to_array())
+        vals.append(prob_to_value(numpy.average(probs)))
+
     return numpy.array(states), numpy.array(vals)
