@@ -30,6 +30,13 @@ class Action(object):
     def __hash__(self):
         return self._hash
         # return hash((self.__class__, tuple(sorted(self.__dict__.items(), key=lambda kv: kv[0]))))
+    def describe(self, choice=None):
+        if choice is None:
+            return str(self)
+        elif isinstance(choice, type):
+            return str(self) + " " + choice.__name__
+        else:
+            return str(self) + " " + str(choice)
 
 class Noop(Action):
     """ Skip """

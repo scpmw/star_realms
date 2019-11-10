@@ -46,8 +46,8 @@ class PlayerState(object):
         state.deck = state.deck - state.discard
         return state
     def describe(self):
-        return "%d auth, %s {%s}" % (
-            self.authority, mset.describe_mset(self.bases), mset.describe_mset(self.deck + self.discard))
+        return "%d auth, %s {%s | %s}" % (
+            self.authority, mset.describe_mset(self.bases), mset.describe_mset(self.deck), mset.describe_mset(self.discard))
     def __hash__(self):
         return hash((self.authority, self.discard_count, self.deck, tuple(self.top_of_deck), self.discard, self.bases))
 """ Persistent game state """
@@ -61,12 +61,14 @@ class GameState(object):
             self.trade = mset.MSet()
             self.scrapped = mset.MSet() # Needed?
         else:
-            self.move = state.move
-            self.player1 = PlayerState(state.player1)
-            self.player2 = PlayerState(state.player2)
-            self.cards = mset.MSet(state.cards)
-            self.trade = mset.MSet(state.trade)
-            self.scrapped = mset.MSet(state.scrapped)
+            self.copy_from(state)
+    def copy_from(self, state):
+        self.move = state.move
+        self.player1 = PlayerState(state.player1)
+        self.player2 = PlayerState(state.player2)
+        self.cards = mset.MSet(state.cards)
+        self.trade = mset.MSet(state.trade)
+        self.scrapped = mset.MSet(state.scrapped)
     def is_over(self):
         return self.player1.authority <= 0 or self.player2.authority <= 0
     def move_players(self):
@@ -105,18 +107,7 @@ class MoveState(object):
     def __init__(self, game):
 
         if isinstance(game, MoveState):
-            self.game = GameState(game.game)
-            self.player, self.opponent = self.game.move_players()
-            self.hand = mset.MSet(game.hand)
-            self.played = mset.MSet(game.played)
-            self.played_all = mset.MSet(game.played_all)
-            self.factions = mset.MSet(game.factions)
-            self.trade = game.trade
-            self.combat = game.combat
-            self.actions = list(game.actions)
-            self.forced_actions = list(game.forced_actions)
-            self.acquire_onto_deck = game.acquire_onto_deck
-            self.per_ship_combat = game.per_ship_combat
+            self.copy_from(game, True)
         else:
             assert isinstance(game, GameState)
             self.game = game
@@ -150,6 +141,22 @@ class MoveState(object):
             for base in self.player.bases.elements():
                 base.play(self, base)
                 self.factions.add(base.faction)
+    def copy_from(self, state, copy_gamestate=False):
+        if copy_gamestate:
+            self.game = GameState(state.game)
+        else:
+            self.game.copy_from(state.game)
+        self.player, self.opponent = self.game.move_players()
+        self.hand = mset.MSet(state.hand)
+        self.played = mset.MSet(state.played)
+        self.played_all = mset.MSet(state.played_all)
+        self.factions = mset.MSet(state.factions)
+        self.trade = state.trade
+        self.combat = state.combat
+        self.actions = list(state.actions)
+        self.forced_actions = list(state.forced_actions)
+        self.acquire_onto_deck = state.acquire_onto_deck
+        self.per_ship_combat = state.per_ship_combat
     def __hash__(self):
         # Order doesn't matter on actions
         action_hashes = tuple([hash(act) for act in self.actions])
@@ -158,13 +165,29 @@ class MoveState(object):
                      self.factions, self.trade, self.combat,
                      action_hashes, forced_action_hashes,
                      self.acquire_onto_deck, self.per_ship_combat))
+    def describe(self):
+        desc = self.game.describe()
+        desc += "\nTrade: {}, Combat: {}".format(self.trade, self.combat)
+        if not self.hand.empty():
+            desc += "\nHand: {}".format(mset.describe_mset(self.hand))
+        if not self.played.empty():
+            desc += "\nPlayed: {}".format(mset.describe_mset(self.played))
+        if self.possible_actions():
+            desc += "\n{} actions: {}".format(
+                "Forced" if self.forced_actions else "Possible",
+                ", ".join([str(act) for act in self.possible_actions()]))
+        if self.acquire_onto_deck:
+            desc += "(next {} ships acquired onto deck)".format(self.acquire_onto_deck)
+        return desc
     def possible_actions(self):
         """ Returns currently possible actions. If actios are forced,
             other actions will not be returned until action gets taken. """
         # First check all forced actions, in given order. Skip impossible actions.
-        for act in self.forced_actions:
+        while self.forced_actions:
+            act = self.forced_actions[0]
             if act.possible(self):
                 return [act]
+            self.forced_actions = self.forced_actions[1:]
         # Otherwise return remaining actions
         possible = []
         for act in self.actions:
@@ -245,4 +268,6 @@ class MoveState(object):
             self.opponent.authority -= self.combat
         self.player.discard = self.player.discard + self.played + self.hand
         # Advance to next move
+        self.hand = self.played = mset.MSet()
         self.game.move += 1
+        self.player, self.opponent = self.game.move_players()
