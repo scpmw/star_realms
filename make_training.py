@@ -38,26 +38,24 @@ for i in range(int(args.get('<count>'))):
     print("Game %d" % i)
     train = []
     if args['--greedy'] is None:
-        train.append(training.make_training(
+        states, vals = raining.make_training(
             model=model,
             max_turns=int(args.get('--max-turns')),
             samples=int(args.get('--samples')),
             threshold=float(args.get('--threshold')),
             threshold_samples=int(args.get('--thr-samples'))
-            ))
+            )
     else:
         if model is None:
             print("Tree search requires model!")
             exit(1)
-        train.append(training.make_greedy_training(
+        states, vals = training.make_greedy_training(
             model=model,
             max_turns=int(args.get('--max-turns')),
             samples=int(args.get('--samples')),
             depths=[ int(d) for d in args['--greedy'].split(',') ]
-            ))    
+            )
             
     # Concatenate training data, write out
-    statess, valss = list(zip(*train))
-    states = numpy.vstack([states for states in statess if len(states.shape) > 1])
-    vals = numpy.hstack(valss)
-    training.append_training(args['<name>'], states, vals)
+    if len(vals) > 0:
+        training.append_training(args['<name>'], states, vals)
