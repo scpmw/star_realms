@@ -43,6 +43,7 @@ if args['--health'] is not None:
     class HealthServer(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
+            self.end_headers()
             self.wfile.write(bytes("OK", "utf-8"))
         def log_message(*_a, **_kw):
             pass
