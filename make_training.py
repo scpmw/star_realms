@@ -33,10 +33,10 @@ if args['--model'] is not None:
     model.train(False)
     
 # Generate training data
-train = []
 for i in range(int(args.get('<count>'))):
     print()
     print("Game %d" % i)
+    train = []
     if args['--greedy'] is None:
         train.append(training.make_training(
             model=model,
