@@ -13,12 +13,16 @@ Options:
   --threshold <x>      Model difference to count as "interesting" [default: 0.1]
   --thr-samples <N>    Check threshold every time after collecting
                        given number of samples  [default: 50]
+  --health <port>      Expose HTTP health check at port
 """
 
 import sys
 import torch
 import numpy
 import docopt
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+    
 from star_realms import training
 from star_realms.nn import make_model
 
@@ -31,14 +35,27 @@ model = None
 if args['--model'] is not None:
     model = make_model(torch.load(args['--model'], map_location=torch.device('cpu')))
     model.train(False)
-    
+
+# Health check? For the moment we just run an HTTP server that responds with 200
+if args['--health'] is not None:
+    serverPort = int(args['--health'])
+    class HealthServer(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.wfile.write(bytes("OK", "utf-8"))
+        def log_message(*_a, **_kw):
+            pass
+    def health_serve_thread():
+        HTTPServer(("localhost", serverPort), HealthServer).serve_forever()
+    threading.Thread(target=health_serve_thread, daemon=True).start()
+
 # Generate training data
 for i in range(int(args.get('<count>'))):
     print()
     print("Game %d" % i)
     train = []
     if args['--greedy'] is None:
-        states, vals = raining.make_training(
+        states, vals = training.make_training(
             model=model,
             max_turns=int(args.get('--max-turns')),
             samples=int(args.get('--samples')),
