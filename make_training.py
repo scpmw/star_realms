@@ -13,7 +13,7 @@ Options:
   --threshold <x>      Model difference to count as "interesting" [default: 0.1]
   --thr-samples <N>    Check threshold every time after collecting
                        given number of samples  [default: 50]
-  --health <port>      Expose HTTP health check at port
+  --health <addr>      Expose HTTP health check at network address
 """
 
 import sys
@@ -38,7 +38,8 @@ if args['--model'] is not None:
 
 # Health check? For the moment we just run an HTTP server that responds with 200
 if args['--health'] is not None:
-    serverPort = int(args['--health'])
+    serverAddr, serverPort = args['--health'].split(':')
+    serverPort = int(serverPort)
     class HealthServer(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
@@ -46,7 +47,7 @@ if args['--health'] is not None:
         def log_message(*_a, **_kw):
             pass
     def health_serve_thread():
-        HTTPServer(("localhost", serverPort), HealthServer).serve_forever()
+        HTTPServer((serverAddr, serverPort), HealthServer).serve_forever()
     threading.Thread(target=health_serve_thread, daemon=True).start()
 
 # Generate training data
