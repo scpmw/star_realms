@@ -29,7 +29,7 @@ if args['<count>'] is None:
 # Load model, if appropriate
 model = None
 if args['--model'] is not None:
-    model = make_model(torch.load(args['--model']))
+    model = make_model(torch.load(args['--model'], map_location=torch.device('cpu')))
     model.train(False)
     
 # Generate training data
