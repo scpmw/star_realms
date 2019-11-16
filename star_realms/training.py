@@ -1,5 +1,6 @@
 
 import os
+import random
 import numpy
 import torch
 
@@ -106,7 +107,7 @@ def make_training(max_turns=30, samples=500,
     return numpy.array(states), numpy.array(vals)
     
 
-def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6],
+def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6], skip_chance=0.9,
                          show_progress=True, show_new=True):
     
     states = []; vals = []
@@ -125,6 +126,9 @@ def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6],
             break
         if show_progress:
             print(".", end='', flush=True)
+
+        if random.random() < skip_chance:
+            continue
 
         # Take samples
         probs = []  
