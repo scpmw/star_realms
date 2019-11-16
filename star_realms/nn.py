@@ -48,5 +48,14 @@ def model_game_prob(model, game_state):
         return 1
         
     # Otherwise check model
-    result = model(torch.tensor(game_state.to_array(), dtype=torch.float))
-    return value_to_prob(result.item())
+    return model_game_prob_array(model, game_state.to_array())
+
+def model_game_prob_array(model, gs_array):
+    """ Returns model propability that next player to move wins, using an
+    array representation of the game state (see GameState.to_array)
+    
+    :param model: Model to use
+    :param gs_array: Input game state(s) as arrays
+    """
+    result = model(torch.tensor(gs_array, dtype=torch.float))
+    return value_to_prob(result.detach().numpy()[...,0])

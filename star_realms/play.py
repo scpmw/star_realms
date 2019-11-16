@@ -1,6 +1,7 @@
 
 import random
 from functools import lru_cache
+import numpy
 
 from . import state, mset, actions, cards, nn
 
@@ -209,6 +210,7 @@ def model_movestate_prob(model, move, game_prob_cache=None, verbose=False, inden
     if verbose >= 1: print(indent + "->", prob)
     return prob
 
+    
 def model_movestate_prob_det(model, move, acquire_priority=None, finish_move_cache=None, game_prob_cache=None,
                              verbose=False, indent='', destructive=False):
     """
@@ -242,14 +244,13 @@ def trade_row_ratings(model, move0, finish_move_cache=None, game_prob_cache=None
     :return: Propability (float)
     """
     ratings = {}
-    
+
     # Get move end state if we do *not* buy anything (shouldn't do much,
     # but just in case)
     moves = move0.game.move
     move = state.MoveState(move0)
     base = model_movestate_prob_det(model, move, [],
-        finish_move_cache, game_prob_cache, verbose, indent,
-        destructive=True)
+        finish_move_cache, game_prob_cache, verbose, indent)
     if verbose:
         print(indent + "Base:", base)
     
@@ -271,6 +272,59 @@ def trade_row_ratings(model, move0, finish_move_cache=None, game_prob_cache=None
         if card != cards.Explorer:
             move.game.trade.add(card)
     return ratings
+
+# Determine indices in game state array
+def _get_trade_row_array_index(card):
+    gs = state.GameState()
+    gs.trade.add(card, 9999)
+    return int(numpy.where(gs.to_array() == 9999)[0])
+_TADE_ROW_INDEX = { card : _get_trade_row_array_index(card) for card in cards.card_list }
+def _get_player2_discard_index(card):
+    gs = state.GameState()
+    gs.player2.discard.add(card, 9999)
+    gs.player2.deck.add(card, 1)
+    return int(numpy.where(gs.to_array() == 9999)[0])
+_P2_DISCARD_INDEX = { card : _get_player2_discard_index(card) for card in cards.card_list }
+def _get_player2_deck_index(card):
+    gs = state.GameState()
+    gs.player2.deck.add(card, 9999 - gs.player2.deck.count(card))
+    return int(numpy.where(gs.to_array() == 9999)[0])
+_P2_DECK_INDEX = { card : _get_player2_deck_index(card) for card in cards.card_list }
+
+def trade_row_ratings_new(model, move0, finish_move_cache=None, game_prob_cache=None, verbose=False, indent=''):
+    """
+    Rates how much we would like to acquire what is currently available
+    for purchase, according to an evaluation model.
+    
+    :param model: Model to use
+    :param move0: Move state to assess 
+    :param finish_move_cache: Cache for finish_move_det
+    :param game_prob_cache: Cache for game propability evaluation
+    :param verbose: Produce debug output
+    :return: Propability (float)
+    """
+
+    # Get move end state if we do *not* buy anything (shouldn't do much,
+    # but just in case)
+    moves = move0.game.move
+    move = finish_move_det(move0, [], finish_move_cache, verbose>1, indent+"> ")
+    game_states = [ move.game.to_array() ]
+
+    # Modify game states to include every individual card removed from
+    # the trade deck and added to the player's deck + discard pile
+    buyable = list(move0.game.trade.values()) + [cards.Explorer]
+    for card in buyable:
+        game_state = numpy.array(game_states[0])
+        game_state[_P2_DISCARD_INDEX[card]] += 1
+        game_state[_P2_DECK_INDEX[card]] += 1
+        if card != cards.Explorer:
+            game_state[_TADE_ROW_INDEX[card]] -= 1
+        game_states.append(game_state)
+
+    # Calculate rating difference        
+    ratings = nn.model_game_prob_array(model, game_states)
+    base = ratings[0]
+    return { card : base - ratings[i+1] for i, card in enumerate(buyable) }
     
 def ratings_to_priority(ratings, min_rating = 0):
     """ Converts a dictionary of ratings into a priotity list
@@ -278,6 +332,49 @@ def ratings_to_priority(ratings, min_rating = 0):
     return sorted([ card for card in ratings.keys() if ratings[card] >= min_rating ],
                     key = lambda card: -ratings[card] )
 
+def evaluate_trade_row_draw(move, model, acquire_priority, finish_move_cache=None, verbose=0, indent=''):
+    """ Evaluate all possibilities for trade row draws in given position.
+    
+    
+    """
+
+    # Get move end state - we might have enough money to buy something after all.
+    move = finish_move_det(move, acquire_priority, finish_move_cache, verbose>1, indent+"> ")
+    if move.game.is_over():
+        return nn.model_game_prob(model, move.game)
+    base_state = move.game.to_array()
+    game_states = []; game_state_count = []
+    game_states_buy = []; buy_indices = []; buy_card = []
+
+    # Construct states where this card is on the trade row
+    for card, count in move.game.cards.items():
+        game_state = numpy.array(base_state)
+        game_state[_TADE_ROW_INDEX[card]] += 1
+        game_states.append(game_state)
+        game_state_count.append(count)
+        # Some cards we might alternatively buy. Note that because of the behaviour of
+        # finish_move_det we will likely not have much buying power left.
+        if move.trade >= card.cost and card in acquire_priority:
+            game_state = numpy.array(base_state)
+            game_state[_P2_DISCARD_INDEX[card]] += 1
+            game_state[_P2_DECK_INDEX[card]] += 1
+            game_states_buy.append(game_state)
+            buy_indices.append(len(game_states)-1)
+            buy_card.append(card)
+        
+    # Evaluate
+    ratings = nn.model_game_prob_array(model, game_states + game_states_buy)
+    
+    # Determine where it is a good idea to buy
+    buy_start_ix = len(game_states)
+    for i,j in enumerate(buy_indices):
+        if ratings[buy_start_ix+i] < ratings[j]:
+            ratings[j] = ratings[buy_start_ix+i]
+    
+    # Calculate weighted sum
+    average = numpy.sum(ratings[:buy_start_ix] * numpy.array(game_state_count)) / numpy.sum(game_state_count)
+    return average
+           
 def make_greedy_move(move, model, take_action=True, finish_move_cache=None, game_prob_cache=None, verbose=0, indent='', skip_forced_rand = True):
     """Select a move guided by a model.
     
@@ -308,7 +405,47 @@ def make_greedy_move(move, model, take_action=True, finish_move_cache=None, game
     best_state = None
     nested_verbose = max(0, verbose - 1)
     nested_indent = indent + "> "
+    def lazy_init():
 
+        # Rate trade row, convert into priority list
+        #trade_ratings = trade_row_ratings(model, move,
+        #    finish_move_cache, game_prob_cache, nested_verbose, nested_indent)
+        trade_ratings = trade_row_ratings_new(model, move,
+            finish_move_cache, game_prob_cache, nested_verbose, nested_indent)
+        #for card in trade_ratings:
+        #    assert(numpy.abs(trade_ratings[card] - trade_ratings_new[card]) < 1e-5)
+        if verbose:
+            print("Trade ratings: ",
+                ", ".join([ "{}:{:.2f}".format(card.__name__, rating)
+                            for card, rating in trade_ratings.items() ]))
+        trade_priority = ratings_to_priority(trade_ratings)
+
+        # Determine the rating of doing nothing. Except if we
+        # have a forced action, of course.
+        if move.forced_actions:
+            if verbose: print(indent + '... forced, skipping evaluation')
+            start_rating = 1
+        elif not move.hand.empty():
+            # Always force hand to be played entirely.
+            start_rating = 1
+        else:
+            if verbose: print(indent + "Initial...")
+            start_rating = model_movestate_prob_det(model, move, [],
+                finish_move_cache, game_prob_cache, nested_verbose, nested_indent)
+            if verbose: print(start_rating)
+        return trade_priority, start_rating
+
+    # Exactly a draw-card-onto-trade-row action left? Use a special (faster)
+    # heuristic to deal with the many cases to consider.
+    if not skip_forced_rand and len(move.forced_actions) == 1 and isinstance(move.forced_actions[0], actions.DrawTrade):
+        trade_priority, best_rating = lazy_init()
+        rating = evaluate_trade_row_draw(move, model, trade_priority, finish_move_cache, nested_verbose, nested_indent)
+        act = move.forced_actions[0]
+        choice = move.game.cards.random()
+        if take_action:
+            move.take_action(act, choice)
+        return [act], [(act, choice)], rating
+    
     possible = move.possible_actions()
     for act in possible:
 
@@ -319,7 +456,10 @@ def make_greedy_move(move, model, take_action=True, finish_move_cache=None, game
         rand_continuations = {} # How to proceed for every random choice
         rand_states = {}
 
-        # Only one random choice?
+        # Only one random choice? And allowed to skip evaluation? Not always the
+        # case - if this is actually a nested choice, we actually might be able to
+        # skip this via a different choice up-stream. So we need to return a rating
+        # (and therefore evaluate all possibilities) to make an informed decision there.
         if skip_forced_rand and move.forced_actions and len(possible) == 1 and (is_rand or len(choices.values()) == 1):
             best_move = [(act, choices.random())]
             best_rand = is_rand
@@ -331,30 +471,8 @@ def make_greedy_move(move, model, take_action=True, finish_move_cache=None, game
             # We only do that here so obvious decisions don't need
             # us to go through all of this trouble
             if best_rating is None:
-                
-                # Rate trade row, convert into priority list
-                trade_ratings = trade_row_ratings(model, move,
-                    finish_move_cache, game_prob_cache, nested_verbose, nested_indent)
-                if verbose:
-                    print("Trade ratings: ",
-                        ", ".join([ "{}:{:.2f}".format(card.__name__, rating)
-                                    for card, rating in trade_ratings.items() ]))
-                trade_priority = ratings_to_priority(trade_ratings)
+                trade_priority, best_rating = lazy_init()
 
-                # Determine the rating of doing nothing. Except if we
-                # have a forced action, of course.
-                if move.forced_actions:
-                    if verbose: print(indent + '... forced, skipping evaluation')
-                    best_rating = 1
-                elif not move.hand.empty():
-                    # Always force hand to be played entirely.
-                    best_rating = 1
-                else:
-                    if verbose: print(indent + "Initial...")
-                    best_rating = model_movestate_prob_det(model, move, [],
-                        finish_move_cache, game_prob_cache, nested_verbose, nested_indent)
-                    if verbose: print(best_rating)
-            
             # Determine rating of the choice
             if verbose: print(indent + act.describe(choice), "...")
             move2 = state.MoveState(move)
@@ -366,7 +484,7 @@ def make_greedy_move(move, model, take_action=True, finish_move_cache=None, game
             if move2.forced_actions or any([act.automatic() for act in move2.possible_actions()]):
                 _, best_continuation, rating = make_greedy_move(move2, model, True,
                     finish_move_cache, game_prob_cache, nested_verbose, nested_indent,
-                    skip_forced_rand=False)
+                    skip_forced_rand = skip_forced_rand and move.forced_actions)
                 if verbose: print(indent + "Continuation:", '; '.join([ act.describe(choice) for act, choice in best_continuation]))
             
             # Still need to re-evaluate rating?

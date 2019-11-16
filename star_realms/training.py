@@ -106,14 +106,18 @@ def make_training(max_turns=30, samples=500,
     return numpy.array(states), numpy.array(vals)
     
 
-def make_greedy_training(model, max_turns=30, samples=50, depths=[3,4,5,6],
+def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6],
                          show_progress=True, show_new=True):
     
     states = []; vals = []
-    finish_move_cache = {}
-    game_prob_cache = {}
+    
     gs = GameState()
     for _ in range(max_turns):
+    
+        # Clear caches after every turn - some efficiency might get lost, but
+        # this prevents excessive memory buildup
+        finish_move_cache = {}
+        game_prob_cache = {}
     
         # Play, check whether game is (close to) over
         play_random_turn(gs)
