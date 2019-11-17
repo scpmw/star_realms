@@ -1,0 +1,5 @@
+/.ipynb_checkpoints
+/training
+/imgs
+*.npy
+__pycache__
