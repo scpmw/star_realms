@@ -11,7 +11,7 @@ from star_realms.nn import prob_to_value, value_to_prob, model_game_prob
 TRAINING_DIR = 'training'
 
 
-def load_training(name, path=TRAINING_DIR):
+def load_training(name, path=TRAINING_DIR, load_traces=False):
     """ Load training data from disk
     
     :param name: name of data set
@@ -22,43 +22,76 @@ def load_training(name, path=TRAINING_DIR):
         "states-{}.npy".format(name))
     vals_path = os.path.join(path, 
         "vals-{}.npy".format(name))
+    traces_path = os.path.join(TRAINING_DIR, 
+        "traces-{}.npy".format(name))
     
     statesd = numpy.load(state_path)
     valsd = numpy.load(vals_path)
-    return statesd, valsd
+    if not load_traces:
+        return statesd, valsd
+    
+    tracesd = numpy.load(traces_path)
+    return statesd, valsd, tracesd
 
 
-def append_training(name, states, vals):
+def append_training(name, states, vals, traces=None):
     """ Append training data to a training data set
     
     :param name: name of data set
     :param states: State description as numpy array
     :param vals: State evaluations
     """
-    
+
+    assert len(states.shape) == 2
+    assert len(vals.shape) == 1
+    assert states.shape[0] == vals.shape[0]
+    if traces is not None:
+        assert len(traces.shape) == 3
+        assert traces.shape[0] == vals.shape[0]
+        assert traces.shape[2] == states.shape[1]
+
     state_path = os.path.join(TRAINING_DIR, 
         "states-{}.npy".format(name))
     vals_path = os.path.join(TRAINING_DIR, 
         "vals-{}.npy".format(name))
+    traces_path = os.path.join(TRAINING_DIR, 
+        "traces-{}.npy".format(name))
 
     # Load previously existing data
     if os.path.isfile(state_path):
         assert os.path.isfile(vals_path)
         statesd = numpy.load(state_path)
         valsd = numpy.load(vals_path)
-        statesd = numpy.vstack([statesd, numpy.array(states)])
-        valsd = numpy.hstack([valsd, vals])
+        # If there are traces, we must provide them on append as well
+        if traces is not None:
+            assert os.path.isfile(traces_path)
+            tracesd = numpy.load(traces_path)
+        else:
+            assert not os.path.isfile(traces_path)
         # Make sure shape is as expected
         assert len(statesd.shape) == 2
         assert len(valsd.shape) == 1
-        assert statesd.shape[1] == states.shape[1]
+        assert statesd.shape[1] == states.shape[1], 'Feature vector length mismatch!'
+        if traces is not None:
+            assert tracesd.shape[1] == traces.shape[1], 'Sample count mismatch!'
+            assert tracesd.shape[2] == traces.shape[2], 'Feature vector length mismatch!'
+        # Concatenate
+        statesd = numpy.vstack([statesd, numpy.array(states)])
+        valsd = numpy.hstack([valsd, vals])
+        if traces is not None:
+            tracesd = numpy.concatenate([tracesd, traces], axis=0)
     else:
-        statesd = numpy.empty((0, states.shape[1]))
-        valsd = numpy.empty((0,))
+        statesd = states
+        valsd = vals
+        if traces is not None:
+            tracesd = traces
+        
 
     # Write to separate file (so we don't overwrite everything if something goes wrong)
-    numpy.save(state_path + "-new", statesd)
+    numpy.save(state_path + "-new", statesd.astype('int16'))
     numpy.save(vals_path + "-new", valsd)
+    if traces is not None:
+        numpy.save(traces_path + "-new", tracesd.astype('int16'))
     
     # Replace
     if os.path.isfile(state_path):
@@ -66,10 +99,16 @@ def append_training(name, states, vals):
             os.remove(state_path + "-old")
         if os.path.isfile(vals_path + "-old"):
             os.remove(vals_path + "-old")
+        if os.path.isfile(traces_path + "-old"):
+            os.remove(traces_path + "-old")
         os.rename(state_path, state_path + "-old")
         os.rename(vals_path, vals_path + "-old")
+        if traces is not None:
+            os.rename(traces_path, traces_path + "-old")
     os.rename(state_path + "-new.npy", state_path)
     os.rename(vals_path + "-new.npy", vals_path)
+    if traces is not None:
+        os.rename(traces_path + "-new.npy", traces_path)
     
 def make_training(max_turns=30, samples=500, 
                   model=None, threshold=0.1, threshold_samples=50,
@@ -126,9 +165,9 @@ def make_training(max_turns=30, samples=500,
     
 
 def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6], skip_chance=0.9,
-                         show_progress=True, show_new=True):
+                         collect_traces=False, show_progress=True, show_new=True):
     
-    states = []; vals = []
+    states = []; vals = []; traces = []
     
     gs = GameState()
     for _ in range(max_turns):
@@ -149,7 +188,7 @@ def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6], skip
             continue
 
         # Take samples
-        probs = []
+        probs = []; trcs = []
         probs_d = { d : [] for d in range(max(depths)+1) }
         for i in range(samples):
             gs2 = GameState(gs)
@@ -167,6 +206,8 @@ def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6], skip
                     prob = 1 - prob
                 if depth in depths:
                     probs.append(prob)
+                    if collect_traces:
+                        trcs.append(gs2.to_array())
                 probs_d[depth].append(prob)
         
         # Take average
@@ -184,5 +225,10 @@ def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6], skip
 
         states.append(gs.to_array())
         vals.append(prob_to_value(numpy.average(probs)))
+        if collect_traces:
+            traces.append(trcs)
 
-    return numpy.array(states), numpy.array(vals)
+    if collect_traces:
+        return numpy.array(states), numpy.array(vals), numpy.array(traces)
+    else:
+        return numpy.array(states), numpy.array(vals)

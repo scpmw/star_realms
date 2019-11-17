@@ -6,14 +6,19 @@ Usage:
   make_training.py [options] (<name>) [<count>]
 
 Options:
-  --greedy <depths>    Do greedy limited tree search, sample at depths [example: 3,4,5,6]
   --max-turns <N>      Maximum number of turns [default: 30]
   --samples <N>        Number of (nested) games to play to determine evaluation [default: 500]
   --model <file>       Reference model to determine "interesting" states
+  --health <addr>      Expose HTTP health check at network address
+  
+Specific to random generator:
   --threshold <x>      Model difference to count as "interesting" [default: 0.1]
   --thr-samples <N>    Check threshold every time after collecting
                        given number of samples  [default: 50]
-  --health <addr>      Expose HTTP health check at network address
+
+Specific to greedy tree search generator:
+  --greedy <depths>    Do greedy limited tree search, sample at depths [example: 3,4,5,6]
+  --trace              Trace if deriving from model (allows replays)
 """
 
 import sys
@@ -57,7 +62,7 @@ for i in range(int(args.get('<count>'))):
     print("Game %d" % i)
     train = []
     if args['--greedy'] is None:
-        states, vals = training.make_training(
+        data = training.make_training(
             model=model,
             max_turns=int(args.get('--max-turns')),
             samples=int(args.get('--samples')),
@@ -68,13 +73,14 @@ for i in range(int(args.get('<count>'))):
         if model is None:
             print("Tree search requires model!")
             exit(1)
-        states, vals = training.make_greedy_training(
+        data = training.make_greedy_training(
             model=model,
             max_turns=int(args.get('--max-turns')),
             samples=int(args.get('--samples')),
-            depths=[ int(d) for d in args['--greedy'].split(',') ]
+            depths=[ int(d) for d in args['--greedy'].split(',') ],
+            collect_traces=args.get('--trace')
             )
             
     # Concatenate training data, write out
-    if len(vals) > 0:
-        training.append_training(args['<name>'], states, vals)
+    if len(data[0]) > 0:
+        training.append_training(args['<name>'], *data)
