@@ -48,7 +48,17 @@ def model_game_prob(model, game_state):
         return 1
         
     # Otherwise check model
-    return model_game_prob_array(model, game_state.to_array())
+    return value_to_prob(model(torch.tensor(game_state.to_array(), dtype=torch.float)).item())
+
+def _get_player_authority_index(player1):
+    gs = state.GameState()
+    if player1:
+        gs.player1.authority = 9999
+    else:
+        gs.player2.authority = 9999
+    return int(numpy.where(gs.to_array() == 9999)[0])
+_P1_AUTHORITY_INDEX = _get_player_authority_index(True)
+_P2_AUTHORITY_INDEX = _get_player_authority_index(False)
 
 def model_game_prob_array(model, gs_array):
     """ Returns model propability that next player to move wins, using an
@@ -57,5 +67,17 @@ def model_game_prob_array(model, gs_array):
     :param model: Model to use
     :param gs_array: Input game state(s) as arrays
     """
-    result = model(torch.tensor(gs_array, dtype=torch.float))
-    return value_to_prob(result.detach().numpy()[...,0])
+    
+    # Check whether any player has lost
+    gs_array = numpy.array(gs_array)
+    sel_p1 = (gs_array[...,_P1_AUTHORITY_INDEX] <= 0)
+    sel_p2 = (gs_array[...,_P2_AUTHORITY_INDEX] <= 0)
+    sel_np = numpy.logical_not(sel_p1 | sel_p2)
+
+    # Get results
+    result = numpy.empty(gs_array.shape[0])
+    if numpy.any(sel_np):
+        result[sel_np] = value_to_prob(model(torch.tensor(gs_array[sel_np], dtype=torch.float)).detach().numpy()[...,0])
+    result[sel_p1] = 0
+    result[sel_p2] = 1
+    return result
