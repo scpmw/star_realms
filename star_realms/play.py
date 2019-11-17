@@ -278,7 +278,7 @@ def _get_trade_row_array_index(card):
     gs = state.GameState()
     gs.trade.add(card, 9999)
     return int(numpy.where(gs.to_array() == 9999)[0])
-_TADE_ROW_INDEX = { card : _get_trade_row_array_index(card) for card in cards.card_list }
+_TRADE_ROW_INDEX = { card : _get_trade_row_array_index(card) for card in cards.card_list }
 def _get_player2_discard_index(card):
     gs = state.GameState()
     gs.player2.discard.add(card, 9999)
@@ -318,7 +318,7 @@ def trade_row_ratings_new(model, move0, finish_move_cache=None, game_prob_cache=
         game_state[_P2_DISCARD_INDEX[card]] += 1
         game_state[_P2_DECK_INDEX[card]] += 1
         if card != cards.Explorer:
-            game_state[_TADE_ROW_INDEX[card]] -= 1
+            game_state[_TRADE_ROW_INDEX[card]] -= 1
         game_states.append(game_state)
 
     # Calculate rating difference        
@@ -349,7 +349,7 @@ def evaluate_trade_row_draw(move, model, acquire_priority, finish_move_cache=Non
     # Construct states where this card is on the trade row
     for card, count in move.game.cards.items():
         game_state = numpy.array(base_state)
-        game_state[_TADE_ROW_INDEX[card]] += 1
+        game_state[_TRADE_ROW_INDEX[card]] += 1
         game_states.append(game_state)
         game_state_count.append(count)
         # Some cards we might alternatively buy. Note that because of the behaviour of
@@ -361,7 +361,7 @@ def evaluate_trade_row_draw(move, model, acquire_priority, finish_move_cache=Non
             game_states_buy.append(game_state)
             buy_indices.append(len(game_states)-1)
             buy_card.append(card)
-        
+
     # Evaluate
     ratings = nn.model_game_prob_array(model, game_states + game_states_buy)
     
