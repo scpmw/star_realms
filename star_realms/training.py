@@ -10,6 +10,24 @@ from star_realms.nn import prob_to_value, value_to_prob, model_game_prob
 
 TRAINING_DIR = 'training'
 
+
+def load_training(name, path=TRAINING_DIR):
+    """ Load training data from disk
+    
+    :param name: name of data set
+    :returns: (states, vals) pair
+    """
+    
+    state_path = os.path.join(path, 
+        "states-{}.npy".format(name))
+    vals_path = os.path.join(path, 
+        "vals-{}.npy".format(name))
+    
+    statesd = numpy.load(state_path)
+    valsd = numpy.load(vals_path)
+    return statesd, valsd
+
+
 def append_training(name, states, vals):
     """ Append training data to a training data set
     
@@ -131,7 +149,8 @@ def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6], skip
             continue
 
         # Take samples
-        probs = []  
+        probs = []
+        probs_d = { d : [] for d in range(max(depths)+1) }
         for i in range(samples):
             gs2 = GameState(gs)
             for depth in range(max(depths)+1):
@@ -143,11 +162,12 @@ def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6], skip
                     play_greedy_turn(gs2, model, finish_move_cache, game_prob_cache, verbose=0)
 
                 # Get model opinion on the state
+                prob = model_game_prob(model, gs2)
+                if (gs2.move - gs.move) % 2 != 0:
+                    prob = 1 - prob
                 if depth in depths:
-                    prob = model_game_prob(model, gs2)
-                    if (gs2.move - gs.move) % 2 != 0:
-                        prob = 1 - prob
                     probs.append(prob)
+                probs_d[depth].append(prob)
         
         # Take average
         if show_new:
@@ -155,9 +175,13 @@ def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6], skip
             print("########################")
             print(gs.describe())
             if model is not None:
-                print("Model:", model(torch.tensor(gs.to_array(), dtype=torch.float)).item())
-            print("Actual:", prob_to_value(numpy.average(probs)), "({} samples)".format(len(probs)))
-        
+                print("Model: {:.3f}".format(model(torch.tensor(gs.to_array(), dtype=torch.float)).item()))
+            print("Actual: {:.3f}+-{:.3f} ({} samples)".format(
+                prob_to_value(numpy.average(probs)), numpy.std(prob_to_value(probs),ddof=1) / numpy.sqrt(len(probs)), len(probs)))
+            print("At depths:", ", ".join([ "{}: {:.3f}+-{:.3f}".format(
+                d, prob_to_value(numpy.average(probs_d[d])), numpy.std(prob_to_value(probs_d[d]),ddof=1) / numpy.sqrt(len(probs_d[d])))
+                for d in probs_d ]))
+
         states.append(gs.to_array())
         vals.append(prob_to_value(numpy.average(probs)))
 
