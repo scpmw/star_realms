@@ -61,7 +61,7 @@ def _get_player_authority_index(player1):
 _P1_AUTHORITY_INDEX = _get_player_authority_index(True)
 _P2_AUTHORITY_INDEX = _get_player_authority_index(False)
 
-def model_game_prob_array(model, gs_array):
+def model_game_prob_array(model, gs_array, device=None):
     """ Returns model propability that next player to move wins, using an
     array representation of the game state (see GameState.to_array)
     
@@ -78,7 +78,7 @@ def model_game_prob_array(model, gs_array):
     # Get results
     result = numpy.empty(gs_array.shape[0])
     if numpy.any(sel_np):
-        result[sel_np] = model(torch.tensor(gs_array[sel_np], dtype=torch.float)).detach().numpy()[...,0]
+        result[sel_np] = model(torch.tensor(gs_array[sel_np], dtype=torch.float, device=device)).cpu().detach().numpy()[...,0]
     result[sel_p1] = 0
     result[sel_p2] = 1
     return result

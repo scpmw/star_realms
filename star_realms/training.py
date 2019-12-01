@@ -319,3 +319,27 @@ def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6], skip
         return numpy.array(states), numpy.array(vals), numpy.array(traces)
     else:
         return numpy.array(states), numpy.array(vals)
+
+def reevaluate_game_probs(model, traces, depths=[3,4,5,6], device=None):
+    """ Re-evaluate the game from traces """
+    
+    assert traces.shape[1] % len(depths) == 0
+    samples = traces.shape[1] // len(depths)
+
+    # Determine what game states are going to go in with what sign
+    # (i.e. same player to move as the game state we're interested in?)    
+    signs = []; ix_d = { d : [] for d in depths }
+    for sample in range(samples):
+        for depth in depths:
+            ix_d[depth].append(len(signs))
+            signs.append(-1 if depth % 2 == 0 else 1)
+    signs = numpy.array(signs)
+    
+    # Now run all traces through the model, and average up to get the
+    # new evaluations
+    new_vals = []
+    for trace in traces:
+        probs = signs * (model_game_prob_array(model, trace, device) - 0.5) + 0.5
+        new_vals.append(numpy.average(probs))
+
+    return numpy.array(new_vals)
