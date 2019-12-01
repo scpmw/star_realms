@@ -3,10 +3,11 @@ import os
 import random
 import numpy
 import torch
+import h5py
 
 from star_realms.state import GameState
 from star_realms.play import play_random_turn, play_greedy_turn, random_win_prob
-from star_realms.nn import prob_to_value, value_to_prob, model_game_prob
+from star_realms.nn import prob_to_value, value_to_prob, model_game_prob, model_game_prob_array
 
 TRAINING_DIR = 'training'
 
@@ -19,11 +20,11 @@ def load_training(name, path=TRAINING_DIR, load_traces=False):
     """
     
     state_path = os.path.join(path, 
-        "states-{}.npy".format(name))
+        "{}-states.npy".format(name))
     vals_path = os.path.join(path, 
-        "vals-{}.npy".format(name))
-    traces_path = os.path.join(TRAINING_DIR, 
-        "traces-{}.npy".format(name))
+        "{}-vals.npy".format(name))
+    traces_path = os.path.join(path, 
+        "{}-traces.npy".format(name))
     
     statesd = numpy.load(state_path)
     valsd = numpy.load(vals_path)
@@ -33,8 +34,29 @@ def load_training(name, path=TRAINING_DIR, load_traces=False):
     tracesd = numpy.load(traces_path)
     return statesd, valsd, tracesd
 
+def load_training_hdf5(name, path=TRAINING_DIR, load_traces=False, slc=slice(None)):
+    """ Load training data from disk
+    
+    :param name: name of data set
+    :returns: (states, vals) pair
+    """
+    
+    h5_path = os.path.join(path, 
+        "{}.h5".format(name))
+    
+    file = h5py.File(h5_path, 'r')
+    statesd = numpy.array(file['states'][slc])
+    valsd = numpy.array(file['vals'][slc])
+    if not load_traces:
+        file.close()
+        return statesd, valsd
+    
+    tracesd = numpy.array(file['traces'][slc])
+    file.close()
+    return statesd, valsd, tracesd
 
-def append_training(name, states, vals, traces=None):
+
+def append_training(name, states, vals, traces=None, path=TRAINING_DIR):
     """ Append training data to a training data set
     
     :param name: name of data set
@@ -50,12 +72,12 @@ def append_training(name, states, vals, traces=None):
         assert traces.shape[0] == vals.shape[0]
         assert traces.shape[2] == states.shape[1]
 
-    state_path = os.path.join(TRAINING_DIR, 
-        "states-{}.npy".format(name))
-    vals_path = os.path.join(TRAINING_DIR, 
-        "vals-{}.npy".format(name))
-    traces_path = os.path.join(TRAINING_DIR, 
-        "traces-{}.npy".format(name))
+    state_path = os.path.join(path, 
+        "{}-states.npy".format(name))
+    vals_path = os.path.join(path, 
+        "{}-vals.npy".format(name))
+    traces_path = os.path.join(path, 
+        "{}-traces.npy".format(name))
 
     # Load previously existing data
     if os.path.isfile(state_path):
@@ -75,6 +97,7 @@ def append_training(name, states, vals, traces=None):
         if traces is not None:
             assert tracesd.shape[1] == traces.shape[1], 'Sample count mismatch!'
             assert tracesd.shape[2] == traces.shape[2], 'Feature vector length mismatch!'
+        
         # Concatenate
         statesd = numpy.vstack([statesd, numpy.array(states)])
         valsd = numpy.hstack([valsd, vals])
@@ -109,7 +132,71 @@ def append_training(name, states, vals, traces=None):
     os.rename(vals_path + "-new.npy", vals_path)
     if traces is not None:
         os.rename(traces_path + "-new.npy", traces_path)
+
+
+def append_training_hdf5(name, states, vals, traces=None, path=TRAINING_DIR):
+    """ Append training data to a training data set
     
+    :param name: name of data set
+    :param states: State description as numpy array
+    :param vals: State evaluations
+    """
+
+    assert len(states.shape) == 2
+    assert len(vals.shape) == 1
+    assert states.shape[0] == vals.shape[0]
+    if traces is not None:
+        assert len(traces.shape) == 3
+        assert traces.shape[0] == vals.shape[0]
+        assert traces.shape[2] == states.shape[1]
+
+    path = os.path.join(path, "{}.h5".format(name))
+
+    # Open if already exists
+    if os.path.isfile(path):
+        file = h5py.File(path, 'r+')
+        statesd = file['states']
+        valsd = file['vals']
+        # If there are traces, we must provide them on append as well
+        if traces is not None:
+            tracesd = file['traces']
+        else:
+            assert not os.path.isfile(traces_path)
+        # Make sure shape is as expected
+        assert len(statesd.shape) == 2
+        assert len(valsd.shape) == 1
+        assert statesd.shape[1] == states.shape[1], 'Feature vector length mismatch!'
+        assert statesd.shape[0] == valsd.shape[0], 'Record number mismatch!'
+        assert statesd.maxshape[0] is None, 'States cannot be appended to!'
+        assert valsd.maxshape[0] is None, 'Values cannot be appended to!'
+        if traces is not None:
+            assert tracesd.shape[1] == traces.shape[1], 'Sample count mismatch!'
+            assert tracesd.shape[2] == traces.shape[2], 'Feature vector length mismatch!'
+            assert tracesd.shape[0] == valsd.shape[0], 'Record number mismatch!'
+            assert tracesd.maxshape[0] is None, 'Traces cannot be appended to!'
+        # Write after existing data
+        start = valsd.shape[0]
+        total = start + vals.shape[0]
+        valsd.resize(total, axis=0)
+        statesd.resize(total, axis=0)
+        if traces is not None:
+            tracesd.resize(total, axis=0)
+        valsd[start:] = vals
+        statesd[start:,:] = states
+        tracesd[start:,:,:] = traces
+        file.close()
+    else:
+        # Create otherwise
+        file = h5py.File(path, 'w')
+        statesd = file.create_dataset('states', data=states,
+            dtype='i2', maxshape=(None, states.shape[1]), compression="lzf")
+        valsd = file.create_dataset('vals', data=vals,
+            dtype=float, maxshape=(None, ), compression="lzf", shuffle=True)
+        if traces is not None:
+            tracesd = file.create_dataset('traces', data=traces,
+                dtype='i2', maxshape=(None, traces.shape[1], traces.shape[2]), compression="lzf", shuffle=True)
+        file.close()
+        
 def make_training(max_turns=30, samples=500, 
                   model=None, threshold=0.1, threshold_samples=50,
                   show_progress=True, show_new=True):
