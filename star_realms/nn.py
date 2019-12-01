@@ -18,8 +18,9 @@ def make_model(nn_state = None, layout = (25,5,2), dropout=0.3):
     model = torch.nn.Sequential(
         torch.nn.Linear(D_in, H1), torch.nn.Dropout(dropout), torch.nn.ReLU(),
         torch.nn.Linear(H1,   H2), torch.nn.Dropout(dropout), torch.nn.ReLU(),
-        torch.nn.Linear(H2,   H3), torch.nn.Dropout(dropout), torch.nn.Softplus(),
-        torch.nn.Linear(H3,   1)
+        torch.nn.Linear(H2,   H2), torch.nn.Dropout(dropout), torch.nn.ReLU(),
+        torch.nn.Linear(H2,   H3), torch.nn.Dropout(dropout), torch.nn.ReLU(),
+        torch.nn.Linear(H3,   1), torch.nn.Sigmoid(),
     )
     if nn_state is not None:
         model.load_state_dict(nn_state)
@@ -48,7 +49,7 @@ def model_game_prob(model, game_state):
         return 1
         
     # Otherwise check model
-    return value_to_prob(model(torch.tensor(game_state.to_array(), dtype=torch.float)).item())
+    return model(torch.tensor(game_state.to_array(), dtype=torch.float)).item()
 
 def _get_player_authority_index(player1):
     gs = state.GameState()
@@ -77,7 +78,7 @@ def model_game_prob_array(model, gs_array):
     # Get results
     result = numpy.empty(gs_array.shape[0])
     if numpy.any(sel_np):
-        result[sel_np] = value_to_prob(model(torch.tensor(gs_array[sel_np], dtype=torch.float)).detach().numpy()[...,0])
+        result[sel_np] = model(torch.tensor(gs_array[sel_np], dtype=torch.float)).detach().numpy()[...,0]
     result[sel_p1] = 0
     result[sel_p2] = 1
     return result
