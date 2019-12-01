@@ -192,7 +192,7 @@ class SupplyBot():
         state.trade += 2
         state.force_action(ScrapHandDiscard())
         state.actions.append(Ally(factions.machine_cult, Combat(2)))
-@card(factions.machine_cult, count=3, cost=2)
+@card(factions.machine_cult, count=3, cost=1)
 class TradeBot():
     @staticmethod
     def play(state, card):
