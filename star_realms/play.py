@@ -120,7 +120,7 @@ def finish_move_det(move, acquire_priority=[], cache=None, verbose=False, indent
         # Calculate for initial position
         move_hash = hash(move) ^ acquire_hash
         if move_hash in cache:
-            if verbose: print(indent+"(found in cache)")
+            if verbose: print(indent+"(found in cache: {})".format(hash(cache[move_hash])))
             assert cache[move_hash].game.move == move.game.move+1
             if destructive: move.copy_from(cache[move_hash])
             return cache[move_hash]
@@ -153,7 +153,7 @@ def finish_move_det(move, acquire_priority=[], cache=None, verbose=False, indent
                         action = act
                         break
             # Only choice, *and* forced? That's deterministic too
-            if len(possible) == 1 and len(choices) == 1 and move.forced_actions:
+            if move.forced_actions and len(possible) == 1 and len(choices) == 1:
                 action = act
                 choice = choices.get_ix(0)
         # Perform action - or not
@@ -171,12 +171,19 @@ def finish_move_det(move, acquire_priority=[], cache=None, verbose=False, indent
         if cache is not None:
             move_hash = hash(move) ^ acquire_hash
             if move_hash in cache:
-                if verbose: print(indent+"(found in cache)")
+                if verbose: print(indent+"(found in cache: {})".format(hash(cache[move_hash])))
                 assert cache[move_hash].game.move == move.game.move+1
                 if destructive: move.copy_from(cache[move_hash])
                 return cache[move_hash]
             hashes.append(move_hash)
     move.finish()
+    # Re-fill trade row
+    for i in range(5 - move.game.trade.count()):
+        for card in [cards.BlobWheel]:
+            if card in move.game.cards:
+                move.game.trade.add(card)
+                move.game.cards.remove(card)
+                break
     # Add move state to cache
     if cache is not None:
         for h in hashes:
@@ -354,7 +361,7 @@ def evaluate_trade_row_draw(move, model, acquire_priority, finish_move_cache=Non
         game_state_count.append(count)
         # Some cards we might alternatively buy. Note that because of the behaviour of
         # finish_move_det we will likely not have much buying power left.
-        if move.trade >= card.cost and card in acquire_priority:
+        if move.trade >= card.cost:
             game_state = numpy.array(base_state)
             game_state[_P2_DISCARD_INDEX[card]] += 1
             game_state[_P2_DECK_INDEX[card]] += 1
@@ -423,7 +430,7 @@ def make_greedy_move(move, model, take_action=True, finish_move_cache=None, game
         # Determine the rating of doing nothing. Except if we
         # have a forced action, of course.
         if move.forced_actions:
-            if verbose: print(indent + '... forced, skipping evaluation')
+            if verbose: print(indent + '... forced {}, skipping evaluation'.format(move.forced_actions[0].describe()))
             start_rating = 1
         elif not move.hand.empty():
             # Always force hand to be played entirely.
@@ -444,6 +451,7 @@ def make_greedy_move(move, model, take_action=True, finish_move_cache=None, game
         choice = move.game.cards.random()
         if take_action:
             move.take_action(act, choice)
+        if verbose: print(indent+"Average trade row draw rating: {}".format(rating))
         return [act], [(act, choice)], rating
     
     possible = move.possible_actions()
