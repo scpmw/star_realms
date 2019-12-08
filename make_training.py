@@ -83,4 +83,4 @@ for i in range(int(args.get('<count>'))):
             
     # Concatenate training data, write out
     if len(data[0]) > 0:
-        training.append_training(args['<name>'], *data)
+        training.append_training_hdf5(args['<name>'], *data)
