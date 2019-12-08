@@ -3,7 +3,7 @@ import torch.nn
 from . import state
 import numpy
 
-def make_model(nn_state = None, layout = (25,5,2), dropout=0.3):
+def make_model(nn_state = None, layout = (20,5,2), dropout=0.5, dropout_in=0.2):
     """
     Make neural network for evaluating game states
     """
@@ -16,7 +16,7 @@ def make_model(nn_state = None, layout = (25,5,2), dropout=0.3):
     # we need to identify and weight a lot of possible strategic options,
     # for which medium-sized ReLU + Softplus seems to make sense.
     model = torch.nn.Sequential(
-        torch.nn.Linear(D_in, H1), torch.nn.Dropout(dropout), torch.nn.ReLU(),
+        torch.nn.Linear(D_in, H1), torch.nn.Dropout(dropout_in), torch.nn.ReLU(),
         torch.nn.Linear(H1,   H2), torch.nn.Dropout(dropout), torch.nn.ReLU(),
         torch.nn.Linear(H2,   H2), torch.nn.Dropout(dropout), torch.nn.ReLU(),
         torch.nn.Linear(H2,   H3), torch.nn.Dropout(dropout), torch.nn.ReLU(),
