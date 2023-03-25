@@ -305,9 +305,10 @@ class ScrapDraw(ScrapHandDiscard):
         super().__init__()
     def apply(self, state, choice):
         super(ScrapDraw, self).apply(state, choice)
-        state.force_action(DrawCard())
-        if self.count > 1:
-            state.force_action(Choice(Noop(), ScrapDraw(self.count-1)))
+        if choice is not ():
+            state.force_action(DrawCard())
+            if self.count > 1:
+                state.force_action(ScrapDraw(self.count-1))
     def style(self):
         return 'danger'
 class DiscardDraw(DiscardCard):

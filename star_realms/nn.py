@@ -1,26 +1,67 @@
 
+import torch
 import torch.nn
 from . import state
 import numpy
 
-def make_model(nn_state = None, layout = (20,5,2), dropout=0.5, dropout_in=0.2):
+_PLAYER_STATE_VECTOR_LEN = state.PlayerState().to_array().shape[0]
+
+class PlayerStateModule(torch.nn.Module):
+    """ Apply separate modules to parts of a game state
+        
+    Args:
+        player_module: Module to apply to player state
+        trade_module: Module to apply to trade row
+
+    Shape:
+        - Input: GameState state vector
+        - Output: Vector of size "2xplayer_output + trade_output"
+
+    Attributes:
+        convs: Learnable convolutions. Shape (grid_size, grid_size, kernel_size, kernel_size, 2)
+    """
+    def __init__(self, player_module, trade_module):
+        super(PlayerStateModule, self).__init__()
+        self.player_module = player_module
+        self.trade_module = trade_module
+
+    def forward(self, inp):
+        return torch.cat([
+            self.player_module(inp[:,:_PLAYER_STATE_VECTOR_LEN]),
+            self.player_module(inp[:,_PLAYER_STATE_VECTOR_LEN:_PLAYER_STATE_VECTOR_LEN*2]),
+            self.trade_module(inp[:,_PLAYER_STATE_VECTOR_LEN*2:])
+        ], dim=1)
+    
+    def extra_repr(self):
+        return 'player_module={}, trade_module={}'.format(
+            self.player_module, self.trade_module
+        )
+
+def make_model(nn_state = None, layout = (200,100,10,200), dropout=0.5, dropout_in=0.2):
     """
     Make neural network for evaluating game states
     """
-    D_in = state.GameState().to_array().shape[0]
-    H1, H2, H3 = layout
-    H1 *= 50; H2 *= 50; H3 *= 50
-    # Three levels with a large first level, and a "softplus" final layer.
-    # Idea is that we need to keep track of a lot of individual card
-    # interactions, so the first layer must be fairly large. From there
-    # we need to identify and weight a lot of possible strategic options,
-    # for which medium-sized ReLU + Softplus seems to make sense.
+    
+    PS_inter, PS_out, TR_out, GS_inter2 = layout
+    
+    PS_in = state.PlayerState().to_array().shape[0]
+    GS_in = state.GameState().to_array().shape[0]
+    TR_in = GS_in - 2 * PS_in
+    
+    GS_inter = 2 * PS_out + TR_out
+    
     model = torch.nn.Sequential(
-        torch.nn.Linear(D_in, H1), torch.nn.Dropout(dropout_in), torch.nn.ReLU(),
-        torch.nn.Linear(H1,   H2), torch.nn.Dropout(dropout), torch.nn.ReLU(),
-        torch.nn.Linear(H2,   H2), torch.nn.Dropout(dropout), torch.nn.ReLU(),
-        torch.nn.Linear(H2,   H3), torch.nn.Dropout(dropout), torch.nn.ReLU(),
-        torch.nn.Linear(H3,   1), torch.nn.Sigmoid(),
+        PlayerStateModule(
+            torch.nn.Sequential(
+                torch.nn.Linear(PS_in, PS_inter), torch.nn.Dropout(dropout_in), torch.nn.ReLU(),
+                torch.nn.Linear(PS_inter, PS_out), torch.nn.Dropout(dropout), torch.nn.ReLU()
+            ),
+            torch.nn.Sequential(
+                torch.nn.Linear(TR_in, TR_out),  torch.nn.Dropout(dropout_in), torch.nn.ReLU()
+            )
+        ),
+        torch.nn.Linear(GS_inter, GS_inter2), torch.nn.Softplus(),
+        torch.nn.Dropout(dropout), torch.nn.Linear(GS_inter2, 1), torch.nn.Sigmoid(),
     )
     if nn_state is not None:
         model.load_state_dict(nn_state)
@@ -78,7 +119,9 @@ def model_game_prob_array(model, gs_array, device=None):
     # Get results
     result = numpy.empty(gs_array.shape[0])
     if numpy.any(sel_np):
-        result[sel_np] = model(torch.tensor(gs_array[sel_np], dtype=torch.float, device=device)).cpu().detach().numpy()[...,0]
+        tensor = torch.tensor(gs_array[sel_np], dtype=torch.float, device=device)
+        mod = model(tensor) 
+        result[sel_np] = mod.cpu().detach().numpy()[...,0]
     result[sel_p1] = 0
     result[sel_p2] = 1
     return result

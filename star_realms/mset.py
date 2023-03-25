@@ -6,6 +6,7 @@ import numpy
 import itertools
 import functools
 import operator
+import math
 
 class MSet(object):
     """ Utility multi set class with a bunch of special capabilities for
@@ -157,10 +158,92 @@ class MSet(object):
     def from_array(elems, arr):
         assert(len(elems) == len(arr))
         return MSet({e:int(v) for e,v in zip(elems, arr) if v != 0})
+    def to_list(self):
+        out = []
+        for elem, c in self._elems.items():
+            for i in range(c):
+                out.append(elem)
+        return out
     def __hash__(self):
         # Yeah, this class is not immutable - be careful, alright?
         # On the bright side, this is pretty fast.
         return self._hash
+    def subsets(self, r, subset_count=False):
+        """ Returns all sub-multisets of this multiset that have the given size
+
+        :param r: Subset size
+        :param subet_count: Return how many ways there are to get the given subset
+        :returns: Iterator over subsets
+        """
+        assert r >= 0
+        # Handle empty set
+        if r == 0:
+            if subset_count:
+                yield MSet(), 1
+            else:
+                yield MSet()
+            return
+        l = len(self._elems)
+        # Implementation inspired by itertools.combinations
+        indices = r * [0]
+        vals = list(self.values())
+        counts = list(self._elems.values())
+        def binom(n, k):
+            return math.factorial(n) // math.factorial(k) // math.factorial(n - k)
+        while True:
+            # Construct a valid index tuple by increasing any 
+            # indices that repeat more often than allowed
+            ix = indices[0]; repeats = 1
+            if ix >= l:
+                return
+            elems = {}
+            count = 1
+            impossible = False
+            for i in range(1,r):
+                ix2 = max(ix, indices[i])
+                # A repeat?
+                if ix == ix2:
+                    # Too many repeats? Set to next valid index
+                    if repeats == counts[ix]:
+                        elems[vals[ix]] = repeats
+                        ix2 += 1
+                        repeats = 1
+                        # If we run over the length we will need to backtrack
+                        if ix2 >= l:
+                            impossible = True
+                            break
+                    else:
+                        # Just count repeat
+                        repeats += 1
+                else:
+                    # Determine number of possible ways we can get
+                    # this number of repeats given the number of existing
+                    # elements
+                    count *= binom(counts[ix], repeats)
+                    elems[vals[ix]] = repeats
+                    repeats = 1
+                ix = indices[i] = ix2
+            if not impossible:
+                # Add last index
+                count *= binom(counts[ix], repeats)
+                elems[vals[ix]] = repeats
+                # Yield a new multi set
+                if subset_count:
+                    yield MSet(elems), count
+                else:
+                    yield MSet(elems)
+            # Find index to increment
+            found = False
+            for i in range(r):
+                if indices[r-i-1]+1 >= l:
+                    indices[r-i-1] = 0
+                else:
+                    indices[r-i-1] += 1
+                    found = True
+                    break
+            # Done
+            if not found:
+                return
 
 def mset_product(*msets):
     """ Cartesion product of multisets """
@@ -225,6 +308,15 @@ class TestMSet(unittest.TestCase):
                                  (['d','c','a','b'], [4,0,2,5]) ]:
             assert (prod.to_array(elems) == expected).all()
             assert MSet.from_array(elems, prod.to_array(elems)) == prod
+    def test_subsets(self):
+        for i in range(6):
+            assert list(MSet(range(i)).subsets(i, True)) == [(MSet(range(i)), 1)]
+            for j in range(i+1):
+                assert list(MSet(range(i)).subsets(j, True)) == \
+                    list([(MSet(comb), 1) for comb in itertools.combinations(range(i), j) ])
+                for elems in itertools.product([1,2,3],repeat=i):
+                    assert MSet([MSet(es) for es in itertools.combinations(elems, j)]) == \
+                        MSet(dict(MSet(elems).subsets(j, True)))
 
 class TestMSetKeyMap(TestMSet):
     def setUp(self):

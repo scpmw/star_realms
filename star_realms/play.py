@@ -2,6 +2,7 @@
 import random
 from functools import lru_cache
 import numpy
+import time
 
 from . import state, mset, actions, cards, nn
 
@@ -177,17 +178,10 @@ def finish_move_det(move, acquire_priority=[], cache=None, verbose=False, indent
                 return cache[move_hash]
             hashes.append(move_hash)
     move.finish()
-    # Re-fill trade row
-    for i in range(5 - move.game.trade.count()):
-        for card in [cards.BlobWheel]:
-            if card in move.game.cards:
-                move.game.trade.add(card)
-                move.game.cards.remove(card)
-                break
     # Add move state to cache
     if cache is not None:
         for h in hashes:
-            cache[h] = move
+            cache[h] = move            
     return move
 
 def model_movestate_prob(model, move, game_prob_cache=None, verbose=False, indent=''):
@@ -210,6 +204,9 @@ def model_movestate_prob(model, move, game_prob_cache=None, verbose=False, inden
         if game_hash in game_prob_cache:
             if verbose >= 1: print(indent + "->", game_prob_cache[game_hash], "(cached)")
             return game_prob_cache[game_hash]
+    # Trade row not filled?
+    if move.game.trade.count() < 5:
+        return evaluate_trade_row_draw(move, model, [], None, game_prob_cache, verbose, indent)
     # Evaluate
     prob = nn.model_game_prob(model, move.game)
     if game_prob_cache is not None:
@@ -339,9 +336,8 @@ def ratings_to_priority(ratings, min_rating = 0):
     return sorted([ card for card in ratings.keys() if ratings[card] >= min_rating ],
                     key = lambda card: -ratings[card] )
 
-def evaluate_trade_row_draw(move, model, acquire_priority, finish_move_cache=None, verbose=0, indent=''):
+def evaluate_trade_row_draw(move, model, acquire_priority, finish_move_cache=None, game_prob_cache=None, verbose=0, indent=''):
     """ Evaluate all possibilities for trade row draws in given position.
-    
     
     """
 
@@ -351,26 +347,55 @@ def evaluate_trade_row_draw(move, model, acquire_priority, finish_move_cache=Non
         return nn.model_game_prob(model, move.game)
     base_state = move.game.to_array()
     game_states = []; game_state_count = []
-    game_states_buy = []; buy_indices = []; buy_card = []
+    game_states_buy = []; buy_indices = []
+    
+    # Check cache
+    game_hash = hash(move.game)
+    if game_prob_cache is not None and game_hash in game_prob_cache:
+        if verbose:
+            print(indent+"(trade row found in cache: {})".format(game_hash))
+        return game_prob_cache[game_hash]
 
+    # Determine number of cards to fill
+    cards_to_fill = 5 - move.game.trade.count()
+    if verbose:
+        print(indent+"Cards to fill: ", cards_to_fill)
+    t = time.time()
+    if cards_to_fill == 0:
+        return model_movestate_prob(model, move, game_prob_cache, verbose, indent)
+        
+    # Reduce number of possibilities a bit by using pretty likely filler cards
+    for filler_card in [cards.BlobWheel, cards.ImperialFighter, cards.FederationShuttle]: 
+        if cards_to_fill <= 2:
+            break
+        if filler_card in move.game.cards:
+            move.game.cards.remove(filler_card)
+            move.game.trade.add(filler_card)
+            cards_to_fill -= 1
+        
     # Construct states where this card is on the trade row
-    for card, count in move.game.cards.items():
+    for i, (card_set, set_count) in enumerate(move.game.cards.subsets(cards_to_fill, True)):
         game_state = numpy.array(base_state)
-        game_state[_TRADE_ROW_INDEX[card]] += 1
+        for card, count in card_set.items():
+            game_state[_TRADE_ROW_INDEX[card]] += count
         game_states.append(game_state)
-        game_state_count.append(count)
+        game_state_count.append(set_count)
         # Some cards we might alternatively buy. Note that because of the behaviour of
         # finish_move_det we will likely not have much buying power left.
-        if move.trade >= card.cost:
-            game_state = numpy.array(base_state)
-            game_state[_P2_DISCARD_INDEX[card]] += 1
-            game_state[_P2_DECK_INDEX[card]] += 1
-            game_states_buy.append(game_state)
-            buy_indices.append(len(game_states)-1)
-            buy_card.append(card)
-
+        for card, count in card_set.items():
+            if move.trade >= card.cost:
+                game_state_buy = numpy.array(game_state)
+                game_state_buy[_P2_DISCARD_INDEX[card]] += 1
+                game_state_buy[_P2_DECK_INDEX[card]] += 1
+                game_states_buy.append(game_state_buy)
+                buy_indices.append(len(game_states)-1)
+    t2 = time.time()
+    
     # Evaluate
     ratings = nn.model_game_prob_array(model, game_states + game_states_buy)
+    
+    if verbose:
+        print(indent + "Options: {}, {} buy ({:.2f} s + {:.2f} s)".format(len(game_states), len(game_states_buy), t2-t, time.time() - t2))
     
     # Determine where it is a good idea to buy
     buy_start_ix = len(game_states)
@@ -380,6 +405,8 @@ def evaluate_trade_row_draw(move, model, acquire_priority, finish_move_cache=Non
     
     # Calculate weighted sum
     average = numpy.sum(ratings[:buy_start_ix] * numpy.array(game_state_count)) / numpy.sum(game_state_count)
+    if game_prob_cache is not None:
+        game_prob_cache[game_hash] = average
     return average
            
 def make_greedy_move(move, model, take_action=True, finish_move_cache=None, game_prob_cache=None, verbose=0, indent='', skip_forced_rand = True):
@@ -422,7 +449,7 @@ def make_greedy_move(move, model, take_action=True, finish_move_cache=None, game
         #for card in trade_ratings:
         #    assert(numpy.abs(trade_ratings[card] - trade_ratings_new[card]) < 1e-5)
         if verbose:
-            print("Trade ratings: ",
+            print(indent + "Trade ratings: ",
                 ", ".join([ "{}:{:.2f}".format(card.__name__, rating)
                             for card, rating in trade_ratings.items() ]))
         trade_priority = ratings_to_priority(trade_ratings)
@@ -446,7 +473,7 @@ def make_greedy_move(move, model, take_action=True, finish_move_cache=None, game
     # heuristic to deal with the many cases to consider.
     if not skip_forced_rand and len(move.forced_actions) == 1 and isinstance(move.forced_actions[0], actions.DrawTrade):
         trade_priority, best_rating = lazy_init()
-        rating = evaluate_trade_row_draw(move, model, trade_priority, finish_move_cache, nested_verbose, nested_indent)
+        rating = evaluate_trade_row_draw(move, model, trade_priority, finish_move_cache, game_prob_cache, nested_verbose, nested_indent)
         act = move.forced_actions[0]
         choice = move.game.cards.random()
         if take_action:
@@ -489,7 +516,7 @@ def make_greedy_move(move, model, take_action=True, finish_move_cache=None, game
             # Forced action left? Execute recursively
             rating = None
             best_continuation = []
-            if move2.forced_actions or any([act.automatic() for act in move2.possible_actions()]):
+            if move2.forced_actions: # or any([act.automatic() for act in move2.possible_actions()]):
                 _, best_continuation, rating = make_greedy_move(move2, model, True,
                     finish_move_cache, game_prob_cache, nested_verbose, nested_indent,
                     skip_forced_rand = skip_forced_rand and move.forced_actions)
@@ -547,11 +574,12 @@ def play_greedy_turn(gs, model, finish_move_cache=None, game_prob_cache=None, ve
     # Play a move through
     move = state.MoveState(gs)
     while True:
+        t = time.time()
         _, acts, rating = make_greedy_move(move, model, True,
             finish_move_cache, game_prob_cache, max(0,verbose-1))
         if not acts:
-            if verbose: print("# Best: End turn")
+            if verbose: print("# Best: End turn {} ({:.2g} s)".format(rating, time.time()-t))
             break
         else:
-            if verbose: print("# Best: ", '; '.join([ act.describe(choice) for act, choice in acts]), rating)
+            if verbose: print("# Best: {} {} ({:.2g} s)".format('; '.join([ act.describe(choice) for act, choice in acts]), rating, time.time()-t))
     move.finish()

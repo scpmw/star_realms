@@ -5,7 +5,7 @@ import numpy
 import torch
 import h5py
 
-from star_realms.state import GameState
+from star_realms.state import GameState, PlayerState
 from star_realms.play import play_random_turn, play_greedy_turn, random_win_prob
 from star_realms.nn import prob_to_value, value_to_prob, model_game_prob, model_game_prob_array
 
@@ -43,18 +43,24 @@ def load_training_hdf5(name, path=TRAINING_DIR, load_traces=False, slc=slice(Non
     
     h5_path = os.path.join(path, 
         "{}.h5".format(name))
+    with h5py.File(h5_path, 'r') as f:
+        return load_training_hdf5_file(f, load_traces, slc)
+
+
+def load_training_hdf5_file(file, load_traces=False, slc=slice(None)):
+    """ Load training data from disk
     
-    file = h5py.File(h5_path, 'r')
+    :param name: name of data set
+    :returns: (states, vals) pair
+    """
+    
     statesd = numpy.array(file['states'][slc])
     valsd = numpy.array(file['vals'][slc])
     if not load_traces:
-        file.close()
         return statesd, valsd
     
     tracesd = numpy.array(file['traces'][slc])
-    file.close()
     return statesd, valsd, tracesd
-
 
 def append_training(name, states, vals, traces=None, path=TRAINING_DIR):
     """ Append training data to a training data set
@@ -303,15 +309,15 @@ def make_greedy_training(model, max_turns=30, samples=20, depths=[3,4,5,6], skip
             print("########################")
             print(gs.describe())
             if model is not None:
-                print("Model: {:.3f}".format(model(torch.tensor(gs.to_array(), dtype=torch.float)).item()))
+                print("Model: {:.3f}".format(model_game_prob(model, gs)))
             print("Actual: {:.3f}+-{:.3f} ({} samples)".format(
-                prob_to_value(numpy.average(probs)), numpy.std(prob_to_value(probs),ddof=1) / numpy.sqrt(len(probs)), len(probs)))
+                numpy.average(probs), numpy.std(probs,ddof=1) / numpy.sqrt(len(probs)), len(probs)))
             print("At depths:", ", ".join([ "{}: {:.3f}+-{:.3f}".format(
-                d, prob_to_value(numpy.average(probs_d[d])), numpy.std(prob_to_value(probs_d[d]),ddof=1) / numpy.sqrt(len(probs_d[d])))
+                d, numpy.average(probs_d[d]), numpy.std(probs_d[d],ddof=1) / numpy.sqrt(len(probs_d[d])))
                 for d in probs_d ]))
 
         states.append(gs.to_array())
-        vals.append(prob_to_value(numpy.average(probs)))
+        vals.append(numpy.average(probs))
         if collect_traces:
             traces.append(trcs)
 
@@ -338,8 +344,135 @@ def reevaluate_game_probs(model, traces, depths=[3,4,5,6], device=None):
     # Now run all traces through the model, and average up to get the
     # new evaluations
     new_vals = []
+    model.train(False)
     for trace in traces:
         probs = signs * (model_game_prob_array(model, trace, device) - 0.5) + 0.5
         new_vals.append(numpy.average(probs))
 
     return numpy.array(new_vals)
+
+class TrainingDataset(torch.utils.data.Dataset):
+    """Interface for PyTorch to load (HDF5) training data
+    
+    Note that for efficiency we implement __getitems__ such that it
+    returns a dictionary of tensors instead of a list of dictionaries.
+    This means that for use with a batch_sampler, the collate_fn
+    must be overridden to just do conversions.
+    """
+    def __init__(self, h5_file, traces=True, transforms=[]):
+        self._file = h5py.File(h5_file, 'r')
+        self._states = self._file['states']
+        self._vals = self._file['vals']
+        if traces:
+            self._traces = self._file['traces']
+        else:
+            self._traces = None
+        self._transforms = transforms
+    def __len__(self):
+        return self._vals.shape[0]
+    def __getitem__(self, idx):
+        result = dict(
+            state=self._states[idx],
+            val=self._vals[idx]
+        )   
+        if self._traces:
+            result['trace'] = self._traces[idx]
+        if self._transforms:
+            result = self._transforms(result)
+        return result
+    def __getitems__(self, idxs):
+        result = dict(
+            state=self._states[idxs],
+            val=self._vals[idxs]
+        )   
+        if self._traces:
+            result['trace'] = self._traces[idxs]
+        if self._transforms:
+            result = self._transforms(result)
+        return result
+    def __getstate__(self):
+        return (self._file.filename, self._traces is not None, self._transforms)
+    def __setstate__(self,state):
+        self._file = h5py.File(state[0], 'r')
+        self._states = self._file['states']
+        self._vals = self._file['vals']
+        if state[1]:
+            self._traces = self._file['traces']
+        else:
+            self._traces = None
+        self._transforms = state[2]
+        
+        
+def make_loader(ds :TrainingDataset, sampler_ds : torch.utils.data.Dataset = None, batch_size :int = 2048, **kwargs):
+
+    if sampler_ds is None:
+        sampler_ds = ds
+    batch_sampler = torch.utils.data.BatchSampler(
+        torch.utils.data.SequentialSampler(sampler_ds), batch_size=batch_size, drop_last=False
+    )
+
+    return torch.utils.data.DataLoader(
+        ds,
+        batch_sampler=batch_sampler,
+        # Data loader already collates results, just need to convert
+        collate_fn=torch.utils.data.default_convert,
+        **kwargs
+    )
+
+def make_signs(depths, samples_per_depth):
+    """ Create signs array
+    
+    Used for indicating whether we are 
+    
+    
+    """
+    
+
+    # Create signs array
+    signs = []; ix_d = { d : [] for d in depths }
+    for sample in range(samples_per_depth):
+        for depth in depths:
+            ix_d[depth].append(len(signs))
+            signs.append(-1 if depth % 2 == 0 else 1)
+    return torch.tensor(signs)
+    
+PLAYERSTATE_LEN = len(PlayerState().to_array())
+
+def traces_training_step(model, states, traces, signs):
+    """ Perform traces training on a number of states.
+    
+    This calculates the (sum of squared) differences between the evaluation
+    of the states and the average of the evaluation of their "traces".
+    Minimising the difference should optimise for a model that correctly predicts
+    the avraage long-term prospect of a game position.
+    
+    :param model: Game state evaluation model
+    :param states: Game states
+    :param traces: Sampling of game states down the line
+    :param signs: Sign to apply to trace game states (positive if the same player
+      is to move as in "states", negative if opposite player)
+    :returns: Diff
+    """
+       
+    state_count = states.shape[0]
+    state_len = states.shape[1]
+    samples = traces.shape[1]
+    
+    # Load traces + evaluate
+    y_pred_2 = model(traces.reshape(state_count*samples, state_len))
+
+    # Hard-code won and lost game states
+    y_pred_2 = y_pred_2.reshape(state_count, samples)
+    y_pred_2 = torch.where(traces[:,:,0] <= 0, 0, y_pred_2)
+    y_pred_2 = torch.where(traces[:,:,PLAYERSTATE_LEN] <= 0, 1, y_pred_2)
+
+    # Average
+    y_pred_2 = y_pred_2 * signs
+    y_pred_2 = torch.mean(y_pred_2, dim=1) - torch.mean(0.5 * signs) + 0.5
+
+    # Evaluate states
+    y_pred = model(states)
+
+    # Determine difference
+    loss = torch.nn.MSELoss()(y_pred_2, y_pred.reshape(state_count))
+    return loss
